@@ -1,0 +1,153 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract MyToken {
+    string public name = "My Token fee2";
+    string public symbol = "MTK2";
+    uint256 public totalSupply;
+    uint256 public buyFeePercentage = 10; // 10% buy fee
+    uint256 public sellFeePercentage = 12; // 12% sell fee
+    uint256 public p2pFeePercentage = 5; // 5% p2p fee
+    uint256 public minimumFeeRecovery = 10000; // Minimum amount of tokens required to trigger fee recovery
+
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    address public Owner;
+    address public marketingWallet;
+    address public teamWallet;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event FeePercentageChanged(uint256 newBuyFeePercentage, uint256 newSellFeePercentage, uint256 newP2PFeePercentage);
+        event MarketingWalletChanged(address newMarketingWallet);
+    event TeamWalletChanged(address newTeamWallet);
+    event FeesRecovered(address indexed from, address indexed to, uint256 amount);
+
+    constructor(uint256 _initialSupply) {
+        totalSupply = _initialSupply;
+        balanceOf[msg.sender] = _initialSupply;
+        Owner = msg.sender;
+        marketingWallet = address(0x1aE0EA34a72D944a8C7603FfB3eC30a6669E454C); // Set marketing wallet to an initial value
+        teamWallet = address(0x0A098Eda01Ce92ff4A4CCb7A4fFFb5A43EBC70DC); // Set team wallet to an initial value
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == Owner, "Only owner can call this function");
+        _;
+    }
+
+    function transfer(address _to, uint256 _value) external returns (bool success) {
+        uint256 feeAmount;
+        uint256 transferAmount;
+
+        if (_to == address(this)) {
+            // Sell: apply sell fee
+            feeAmount = (_value * sellFeePercentage) / 100;
+            transferAmount = _value - feeAmount;
+        } else {
+            // Transfer: apply p2p fee
+            feeAmount = (_value * p2pFeePercentage) / 100;
+            transferAmount = _value - feeAmount;
+        }
+
+        require(balanceOf[msg.sender] >= _value, "Insufficient balance");
+
+        balanceOf[msg.sender] -= _value;
+        balanceOf[_to] += transferAmount;
+        balanceOf[address(this)] += feeAmount;
+
+        emit Transfer(msg.sender, _to, transferAmount);
+        emit Transfer(msg.sender, address(this), feeAmount);
+
+        // Check if fee recovery should be triggered
+        if (balanceOf[address(this)] >= minimumFeeRecovery) {
+            recoverFees();
+        }
+
+        return true;
+    }
+
+    function approve(address _spender, uint256 _value) external returns (bool success) {
+        allowance[msg.sender][_spender] = _value;
+
+        emit Approval(msg.sender, _spender, _value);
+
+        return true;
+    }
+
+    function transferFrom(address _from, address _to, uint256 _value) external returns (bool success) {
+        require(_value <= balanceOf[_from], "Insufficient balance");
+        require(_value <= allowance[_from][msg.sender], "Insufficient allowance");
+
+        uint256 feeAmount;
+        uint256 transferAmount;
+
+        if (_to == address(this)) {
+            // Sell: apply sell fee
+            feeAmount = (_value * sellFeePercentage) / 100;
+            transferAmount = _value - feeAmount;
+        } else {
+            // Transfer: apply p2p fee
+            feeAmount = (_value * p2pFeePercentage) / 100;
+            transferAmount = _value - feeAmount;
+        }
+
+        balanceOf[_from] -= _value;
+        balanceOf[_to] += transferAmount;
+        balanceOf[address(this)] += feeAmount;
+        allowance[_from][msg.sender] -= _value;
+
+        emit Transfer(_from, _to, transferAmount);
+        emit Transfer(_from, address(this), feeAmount);
+
+        // Check if fee recovery should be triggered
+        if (balanceOf[address(this)] >= minimumFeeRecovery) {
+            recoverFees();
+        }
+
+        return true;
+    }
+
+    function changeFeePercentages(uint256 _newBuyFeePercentage, uint256 _newSellFeePercentage, uint256 _newP2PFeePercentage) external onlyOwner {
+        require(_newBuyFeePercentage <= 100 && _newSellFeePercentage <= 100 && _newP2PFeePercentage <= 100, "Invalid percentage");
+        buyFeePercentage = _newBuyFeePercentage;
+        sellFeePercentage = _newSellFeePercentage;
+        p2pFeePercentage = _newP2PFeePercentage;
+        emit FeePercentageChanged(_newBuyFeePercentage, _newSellFeePercentage, _newP2PFeePercentage);
+    }
+
+        function changeMarketingWallet(address _newMarketingWallet) external onlyOwner {
+        require(_newMarketingWallet != address(0), "Invalid marketing wallet address");
+        marketingWallet = _newMarketingWallet;
+        emit MarketingWalletChanged(_newMarketingWallet);
+    }
+
+    function changeTeamWallet(address _newTeamWallet) external onlyOwner {
+        require(_newTeamWallet != address(0), "Invalid team wallet address");
+        teamWallet = _newTeamWallet;
+        emit TeamWalletChanged(_newTeamWallet);
+    }
+
+    function recoverFees() public {
+        uint256 feeAmount = balanceOf[address(this)];
+        require(feeAmount > 0, "No fees to recover");
+
+        uint256 marketingAmount = (feeAmount * 80) / 100;
+        uint256 teamAmount = feeAmount - marketingAmount;
+
+        balanceOf[address(this)] = 0;
+        balanceOf[marketingWallet] += marketingAmount;
+        balanceOf[teamWallet] += teamAmount;
+
+        emit Transfer(address(this), marketingWallet, marketingAmount);
+        emit Transfer(address(this), teamWallet, teamAmount);
+        emit FeesRecovered(address(this), marketingWallet, marketingAmount);
+        emit FeesRecovered(address(this), teamWallet, teamAmount);
+    }
+}
+
+
+//Ja tinc bastant controlat aquest contracte, crec que funciona prou be. Es per capturar fees i distribuirles a un 80-20, crec que analitzant una mica puc combinar
+// amb el contracte de la maxwallet i demes

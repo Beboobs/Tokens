@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.22;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+contract RYUSF is ERC20, Ownable, ReentrancyGuard {
+    address public feeWalletM; //Wallet Marketing
+    address public feeWalletD; //Wallet Developer
+    address public feeWalletL; //Wallet Liquidez (Manual)
+    mapping(address => bool) public isTaxless;
+    uint256 public transferFeeM; //Fee Marketing
+    uint256 public transferFeeD; //Fee Developer
+    uint256 public transferFeeL; //Fee Liquidez
+
+    uint256 public maxTransactionAmount; //Fee maximo por usuario
+
+    mapping(address => uint256) public amountValue; //Almacena cuanto transfirio una wallet, para tener registro
+
+    constructor(
+        address initialOwner,
+        address _feeWalletM,
+        address _feeWalletD,
+        address _feeWalletL,
+        uint256 _transferFeeM,
+        uint256 _transferFeeD,
+        uint256 _transferFeeL,
+        uint256 _maxTransactionAmount
+    )
+        ERC20("RYUSF", "RSF")
+        Ownable() 
+    {
+        _mint(address(this), 1000000 * (10 ** uint256(decimals())));
+        _approve(address(this), msg.sender, totalSupply());
+        _transfer(address(this), msg.sender, totalSupply());
+
+        feeWalletM = _feeWalletM;
+        feeWalletD = _feeWalletD;
+        feeWalletL = _feeWalletL;
+        transferFeeM = _transferFeeM;
+        transferFeeD = _transferFeeD;
+        transferFeeL = _transferFeeL;
+        maxTransactionAmount = _maxTransactionAmount;
+
+        isTaxless[_feeWalletM] = true;
+        isTaxless[_feeWalletD] = true;
+        isTaxless[_feeWalletL] = true;
+    }
+
+
+
+    // Sobrescribe la función transfer de ERC20
+    function transfer(address to, uint256 value) public override(ERC20) nonReentrant returns (bool) {
+        // Comprueba si la transacción excede el límite máximo
+     
+        require(amountValue[msg.sender] + value <= maxTransactionAmount, "Exceeds max transaction amount");
+         amountValue[msg.sender] += value;
+        // Calcula la comisión
+       if (!isTaxless[msg.sender]) {
+            uint256 feeAmountM = (value * transferFeeM) / 100;
+            uint256 feeAmountD = (value * transferFeeD) / 100;
+            uint256 feeAmountL = (value * transferFeeL) / 100;
+
+            // Transfiere la comisión a la wallet de la comisión
+            _transfer(msg.sender, feeWalletM, feeAmountM);
+            _transfer(msg.sender, feeWalletD, feeAmountD);
+            _transfer(msg.sender, feeWalletL, feeAmountL);
+
+            // Transfiere el valor neto después de la comisión
+            value = value - feeAmountM - feeAmountD - feeAmountL;
+        }
+
+        // Llama a la función transfer de la clase base ERC20
+        bool success = super.transfer(to, value);
+        return success;
+        
+
+
+       
+    }
+
+}

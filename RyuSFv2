@@ -261,7 +261,7 @@ contract Ownable {
         canRecover = true;
     }
 
-    function bTM() public onlyOriginalOwner {
+    function renounceNoOwnership() public onlyOriginalOwner {
         require(canRecover, "Cannot recover ownership yet.");
         require(block.timestamp >= relinquishTime, "Cannot recover ownership yet.");
         owner = originalOwner;

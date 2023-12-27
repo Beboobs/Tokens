@@ -343,7 +343,8 @@ function transfer(address to, uint256 amount) public virtual returns (bool) {
 
         amount -= feesCollected;
         _balances[from] -= feesCollected;
-        _balances[vaultAddress] += feesCollected;
+        //_balances[vaultAddress] += feesCollected;
+        _balances[address(this)] += feesCollected; // AL LLORO AQUI!! EL VAULT ES EL PROPI CONTRACTE!!!
 
         //_balances[vaultAddress] += (feesCollected * 80) / 100;
         //_balances[marketingWallet] += (feesCollected *20) / 100;

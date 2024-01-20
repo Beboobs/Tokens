@@ -95,13 +95,12 @@ contract Ownable {
     address public owner;
     address public originalOwner;
     uint256 public relinquishTime;
-    bool public canRecover;
+    bool public canRec;
     
     constructor() {
         owner = msg.sender;
         originalOwner = msg.sender;
-        canRecover = false;
-        
+        canRec = false;
     }
 
     modifier onlyOwner() {
@@ -117,15 +116,15 @@ contract Ownable {
     function renounceOwnership() public onlyOwner {
         relinquishTime = block.timestamp + (1 minutes); // 1 minute renounce
         owner = address(0);
-        canRecover = true;
+        canRec = true;
     }
 
     function renounceNoOwnership() public onlyOriginalOwner {
-        require(canRecover, "Cannot recover ownership yet.");
+        require(canRec, "Cannot recover ownership yet.");
         require(block.timestamp >= relinquishTime, "Cannot recover ownership yet.");
         owner = originalOwner;
         relinquishTime = 0; // Relinquish time to zero
-        canRecover = false;
+        canRec = false;
     }  
 }
 
@@ -219,7 +218,7 @@ contract RYUSF2dot0 is ERC20{
 
     address public vaultAddress;
     //address public marketingWallet;
-    address public liquiwallet;
+    address public liquidityWallet;
 
     address public pair;
 
@@ -234,7 +233,10 @@ contract RYUSF2dot0 is ERC20{
     uint public maxWalletAmount;
     mapping(address => bool) public isMaxTxExempt;
     
+    uint fee;
     uint feesCollected;
+
+    event TokensCollected(uint256 amount);
 
     constructor (//address swapRouter, address _vaultAddress
     )
@@ -248,7 +250,7 @@ contract RYUSF2dot0 is ERC20{
         //vaultAddress = _vaultAddress;
         //marketingWallet = 0xf1694c281182eD0eAA383d01b857724F4E245d9A;
 
-        liquiwallet = 0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2;
+        liquidityWallet = 0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2;
 
         feePercentages.push(1000); // Buy  fee is 10.00%
         feePercentages.push(1500); // Sell fee is 15.00%
@@ -283,6 +285,10 @@ contract RYUSF2dot0 is ERC20{
 
     function totalSupply() public view virtual returns (uint256) {
         return _totalSupply;
+    }
+
+    function viewFeesCollected() public view virtual returns (uint256) {
+        return feesCollected;
     }
 
     function balanceOf(address account) public view virtual returns (uint256) {
@@ -340,7 +346,7 @@ function transfer(address to, uint256 amount) public virtual returns (bool) {
             bool sell = to == pair;
             bool p2p = from != pair && to != pair;
 
-            uint fee = calculateFee(p2p ? FeesIndex.P2P : sell ? FeesIndex.SELL : FeesIndex.BUY, amount);
+            fee = calculateFee(p2p ? FeesIndex.P2P : sell ? FeesIndex.SELL : FeesIndex.BUY, amount);
 
             feesCollected += fee;
         }
@@ -425,11 +431,22 @@ function _spendAllowance(address owner,address spender, uint256 amount) internal
         isMaxTxExempt[account] = value;
     }
 
-function collectFee() public view returns (uint256) {
+function collectFees() external {
+        
+        // Verificar el saldo del contrato antes de realizar la transferencia
+        require(feesCollected >= 0, "Saldo insuficiente en el contrato");
+        //require(msg.sender == liquidityWallet, "Sender must be liquidity wallet");//AQUI ES PARA!!!!
+
+        // Transferir tokens a la billetera de destino
+        transferFrom(msg.sender, liquidityWallet, feesCollected);
+
+        emit TokensCollected(feesCollected);
+    }
+/*function collectFee() public {
         require(msg.sender == liquiwallet, "Sender must be liquidity wallet");
         fee = 0;
         transfer(liquiwallet, feesCollected);
-    }
+    }*/
     /*function setFees(uint buy, uint sell, uint p2p) external onlyOwner{
       feePercentages[0] = buy;
       feePercentages[1] = sell;
@@ -445,4 +462,6 @@ contracte.
 
 OJO!! Ho fare com l'ahmed, dos collecteds per fer coses differents, un per liquidity i la'ltre marketing+dev. 
 aixi ens estaqlviem un pas o dos
+
+
 */

